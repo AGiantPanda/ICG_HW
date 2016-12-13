@@ -1,0 +1,702 @@
+<html>
+
+<head>
+<title>ICG WebGL &mdash; HW1</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="glMatrix-0.9.5.min.js"></script>
+<script type="text/javascript" src="webgl-utils.js"></script>
+
+<script id="fragmentShader" type="fragment">
+    precision mediump float;
+    //determines how much precision the GPU uses when calculating floats, {highp, mediump, lowp}, this kind of setting is a must
+    //usually use highp for vertex position
+    //mediump for texture coordinates
+    //lowp for colors
+
+    varying vec4 fragcolor;
+    varying vec3 fragPosition;
+    varying vec3 fragNormal;
+    varying vec2 fragTextureCoord;
+
+    varying vec3 lightPos;
+    varying vec3 lightAmb;
+    varying vec3 lightDif;
+    varying vec3 lightSpe;
+    varying float shininess;
+
+    uniform sampler2D fSampler;
+    uniform int fsShadingType;
+
+    void main(void) {
+        if(fsShadingType == 1)
+            gl_FragColor = fragcolor;
+        else
+        {
+            //Phong & flat Shading
+            vec3 lightDir = normalize(lightPos - fragPosition);
+            vec4 FragColor = texture2D(fSampler, vec2(fragTextureCoord.s, fragTextureCoord.t));
+
+            vec3 eyeDir = normalize(-fragPosition);
+            vec3 normal = normalize(fragNormal);
+
+            vec3 halfwayDir = normalize(lightDir + eyeDir);
+            float diffuse = max(dot(normal, lightDir), 0.0);
+            float specular = pow(max(dot(halfwayDir, normal), 0.0), shininess);
+            if(fsShadingType == 3)
+            {
+                FragColor = vec4(1.0, 1.0, 1.0, 1.0);
+
+                if(diffuse >= 0.66)
+                    diffuse = 0.66;
+                else if(diffuse >= 0.33)
+                    diffuse = 0.33;
+                else
+                    diffuse = 0.0;
+
+                if(specular >= 0.5)
+                    specular = 0.5;
+                else
+                    specular = 0.0;
+            }
+            vec3 totalWeight = lightAmb + diffuse * lightDif + specular * lightSpe;
+            //totalWeight = specular * lightSpe;
+            gl_FragColor = vec4(totalWeight * FragColor.rgb, FragColor.a);
+        }
+    }
+</script>
+
+<script id="vertexShader" type="vertex">
+    attribute vec3 aVertexPosition;
+    attribute vec3 aVertexNormal;
+    attribute vec2 aTextureCoord;
+
+    attribute vec3 aVertexCentralPosition;
+
+    struct Light
+    {
+        vec3 position;
+        vec3 ambient;
+        vec3 diffuse;
+        vec3 specular;
+    };
+
+    struct Material
+    {
+        float shininess;
+    };
+
+    uniform mat4 uMVMatrix;
+    uniform mat3 uNMatrix;
+    uniform mat4 uPMatrix;
+
+    uniform sampler2D uSampler;
+    uniform int vsShadingType;
+    uniform Light sunLight;
+    uniform Material material;
+
+    varying vec4 fragcolor;
+    varying vec3 fragPosition;
+    varying vec3 fragNormal;
+    varying vec2 fragTextureCoord;
+
+    varying vec3 lightPos;
+    varying vec3 lightAmb;
+    varying vec3 lightDif;
+    varying vec3 lightSpe;
+    varying float shininess;
+
+    void main(void) {
+        gl_Position = uPMatrix * uMVMatrix * vec4(aVertexPosition, 1.0);
+        vec4 vertexColor;
+        vec3 vertexPosition = (uMVMatrix * vec4(aVertexPosition, 1.0)).xyz;
+
+        //if its not Flat Shading, pass the position
+        if(vsShadingType != 1)
+        {
+            if(vsShadingType == 0)
+                vertexPosition = (uMVMatrix * vec4(aVertexCentralPosition, 1.0)).xyz;
+            fragPosition = vertexPosition;
+            fragTextureCoord = aTextureCoord;
+            fragNormal = uNMatrix * aVertexNormal;
+            lightAmb = sunLight.ambient;
+            lightPos = sunLight.position;
+            lightDif = sunLight.diffuse;
+            lightSpe = sunLight.specular;
+            shininess = material.shininess;
+        }
+        else if(vsShadingType == 1)
+        {
+            vec3 lightDir = normalize(sunLight.position - vertexPosition);
+            vertexColor = texture2D(uSampler, vec2(aTextureCoord.s, aTextureCoord.t));
+
+            //is the eye position (0.0, 0.0, 0.0)???
+            vec3 eyeDir = normalize(-vertexPosition);
+            vec3 normal = normalize(uNMatrix * aVertexNormal);
+            vec3 halfwayDir = normalize(eyeDir + lightDir);
+
+            float diffuse = max(dot(normal, lightDir), 0.0);
+            float specular = pow(max(dot(halfwayDir, normal), 0.0), material.shininess);
+            vec3 totalWeight = sunLight.ambient + diffuse * sunLight.diffuse + specular * sunLight.specular;
+
+            fragcolor = vec4(totalWeight * vertexColor.rgb, vertexColor.a);
+        }
+    }
+</script>
+
+
+<script type="text/javascript">
+
+    var gl;
+
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("experimental-webgl");
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+
+    function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+
+        var shader;
+        if (shaderScript.type == "fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+
+    var shaderProgram;
+
+    function initShaders() {
+        var fragmentShader = getShader(gl, "fragmentShader");
+        var vertexShader = getShader(gl, "vertexShader");
+
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+
+        gl.useProgram(shaderProgram);
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+        shaderProgram.textureCoordAttribute = gl.getAttribLocation(shaderProgram, "aTextureCoord");
+        gl.enableVertexAttribArray(shaderProgram.textureCoordAttribute);
+
+        //for damning flat shading
+        shaderProgram.vertexCentralPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexCentralPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexCentralPositionAttribute);
+
+        shaderProgram.pMatrixUniform = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+        shaderProgram.nMatrixUniform = gl.getUniformLocation(shaderProgram, "uNMatrix");
+        shaderProgram.samplerUniform = gl.getUniformLocation(shaderProgram, "uSampler");
+        shaderProgram.fsamplerUniform = gl.getUniformLocation(shaderProgram, "fSampler");
+
+        shaderProgram.sunLightPos = gl.getUniformLocation(shaderProgram, "sunLight.position");
+        shaderProgram.sunLightAmb = gl.getUniformLocation(shaderProgram, "sunLight.ambient");
+        shaderProgram.sunLightDif = gl.getUniformLocation(shaderProgram, "sunLight.diffuse");
+        shaderProgram.sunLightSpe = gl.getUniformLocation(shaderProgram, "sunLight.specular");
+
+        shaderProgram.materialShininess = gl.getUniformLocation(shaderProgram, "material.shininess");
+
+        shaderProgram.vsShadingType = gl.getUniformLocation(shaderProgram, "vsShadingType");
+        shaderProgram.fsShadingType = gl.getUniformLocation(shaderProgram, "fsShadingType");
+    }
+
+
+    function handleLoadedTexture(texture) {
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, texture.image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+        gl.generateMipmap(gl.TEXTURE_2D);
+
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+
+    var galvanizedTexture;
+
+    function initTextures() {
+        galvanizedTexture = gl.createTexture();
+        galvanizedTexture.image = new Image();
+        galvanizedTexture.image.onload = function () {
+            handleLoadedTexture(galvanizedTexture)
+        }
+        galvanizedTexture.image.src = "./textures/galvanizedTexture.jpg";
+    }
+
+
+    var mvMatrix = mat4.create();
+    var pMatrix = mat4.create();
+    var shearMatrix = mat4.create();
+    var scaleMatrix = mat4.create();
+    var transMatrix = mat4.create();
+
+
+    function setMatrixUniforms() {
+        gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, pMatrix);
+        gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, mvMatrix);
+
+        //get normal matrix
+        var normalMatrix = mat3.create();
+        mat4.toInverseMat3(mvMatrix, normalMatrix);
+        mat3.transpose(normalMatrix);
+        gl.uniformMatrix3fv(shaderProgram.nMatrixUniform, false, normalMatrix);
+    }
+
+    function degToRad(degrees) {
+        return degrees * Math.PI / 180;
+    }
+
+
+    var teapotVertexPositionBuffer;
+    var teapotVertexNormalBuffer;
+    var teapotVertexTextureCoordBuffer;
+    var teapotVertexIndexBuffer;
+    var teapotVertexFlatNormalBuffer;
+    var teapotVertexFlatPositionBuffer;
+    var teapotVertexCentralPositionBuffer;
+
+    function handleLoadedTeapot(teapotData) {
+        teapotVertexNormalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(teapotData.vertexNormals), gl.STATIC_DRAW);
+        teapotVertexNormalBuffer.itemSize = 3;
+        teapotVertexNormalBuffer.numItems = teapotData.vertexNormals.length / 3;
+
+        teapotVertexTextureCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexTextureCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(teapotData.vertexTextureCoords), gl.STATIC_DRAW);
+        teapotVertexTextureCoordBuffer.itemSize = 2;
+        teapotVertexTextureCoordBuffer.numItems = teapotData.vertexTextureCoords.length / 2;
+
+        teapotVertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(teapotData.vertexPositions), gl.STATIC_DRAW);
+        teapotVertexPositionBuffer.itemSize = 3;
+        teapotVertexPositionBuffer.numItems = teapotData.vertexPositions.length / 3;
+
+        teapotVertexIndexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, teapotVertexIndexBuffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(teapotData.indices), gl.STATIC_DRAW);
+        teapotVertexIndexBuffer.itemSize = 1;
+        teapotVertexIndexBuffer.numItems = teapotData.indices.length;
+
+        //the following code is for flat damning shading
+        //for normal
+        teapotVertexFlatNormalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexFlatNormalBuffer);
+        //re-calculate every triangle's normal data
+        var vertexFlatNormals = calculateFlatNormals(teapotData.vertexPositions, teapotData.indices);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexFlatNormals), gl.STATIC_DRAW);
+        teapotVertexFlatNormalBuffer.itemSize = 3;
+        teapotVertexFlatNormalBuffer.numItems = teapotData.indices.length;
+
+        //for pos
+        teapotVertexFlatPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexFlatPositionBuffer);
+        //re-store every point without index
+        var vertexFlatPositions = calculateFlatVertices(teapotData.vertexPositions, teapotData.indices);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexFlatPositions), gl.STATIC_DRAW);
+        teapotVertexFlatPositionBuffer.itemSize = 3;
+        teapotVertexFlatPositionBuffer.numItems = teapotData.indices.length;
+
+        //for central pos
+        teapotVertexCentralPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexCentralPositionBuffer);
+        //calculate a central point foreach triangle
+        var vertexCentralPositions = calculateCentralVertices(teapotData.vertexPositions, teapotData.indices);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexFlatPositions), gl.STATIC_DRAW);
+        teapotVertexCentralPositionBuffer.itemSize = 3;
+        teapotVertexCentralPositionBuffer.numItems = teapotData.indices.length;
+
+        //for central pos's texcoord
+        teapotVertexCentralTextureCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexCentralTextureCoordBuffer);
+        var vertexCentralTextureCoord = calculateCentralTextureCoord(teapotData.vertexTextureCoords, teapotData.indices);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertexCentralTextureCoord), gl.STATIC_DRAW);
+        teapotVertexCentralTextureCoordBuffer.itemSize = 2;
+        teapotVertexCentralTextureCoordBuffer.numItems = teapotData.indices.length;
+    }
+
+    //@@origVertices: model's vertices
+    //@@indices: model's indices for every triangle
+    function calculateFlatNormals(origVertices, indices)
+    {
+        var normals = [];
+        for(var i = 0; i < indices.length; i+=3)
+        {
+            var ia = indices[i] * 3;
+            var ib = indices[i + 1] * 3;
+            var ic = indices[i + 2] * 3;
+            var pa = [origVertices[ia], origVertices[ia + 1], origVertices[ia + 2]];
+            var pb = [origVertices[ib], origVertices[ib + 1], origVertices[ib + 2]];
+            var pc = [origVertices[ic], origVertices[ic + 1], origVertices[ic + 2]];
+            //var v1 = [pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]];
+            //var v2 = [pb[0] - pc[0], pb[1] - pc[1], pb[2] - pc[2]];
+            var v1 = [pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]];
+            var v2 = [pc[0] - pb[0], pc[1] - pb[1], pc[2] - pb[2]];
+            var v3 = [v1[1] * v2[2] - v1[2] * v2[1], v1[2] * v2[0] - v1[0] * v2[2], v1[0] * v2[1] - v1[1] * v2[0]];
+            normals.push(v3[0]);
+            normals.push(v3[1]);
+            normals.push(v3[2]);
+            normals.push(v3[0]);
+            normals.push(v3[1]);
+            normals.push(v3[2]);
+            normals.push(v3[0]);
+            normals.push(v3[1]);
+            normals.push(v3[2]);
+        }
+        return normals;
+    }
+
+    //to calculate a central point of a triangle
+    function calculateCentralVertices(origVertices, indices)
+    {
+        var vertices = [];
+        for(var i = 0; i < indices.length; i+=3)
+        {
+            var ia = indices[i] * 3;
+            var ib = indices[i + 1] * 3;
+            var ic = indices[i + 2] * 3;
+            var pa = [origVertices[ia], origVertices[ia + 1], origVertices[ia + 2]];
+            var pb = [origVertices[ib], origVertices[ib + 1], origVertices[ib + 2]];
+            var pc = [origVertices[ic], origVertices[ic + 1], origVertices[ic + 2]];
+            var ratio = 1 / 3;
+            var pos = [(pa[0] + pb[0] + pc[0]) * ratio, (pa[1] + pb[1] + pc[1]) * ratio, (pa[2] + pb[2] + pc[2]) * ratio];
+            vertices.push(pos[0]);
+            vertices.push(pos[1]);
+            vertices.push(pos[2]);
+            vertices.push(pos[0]);
+            vertices.push(pos[1]);
+            vertices.push(pos[2]);
+            vertices.push(pos[0]);
+            vertices.push(pos[1]);
+            vertices.push(pos[2]);
+        }
+        return vertices;
+    }
+
+    //to calculate positions
+    function calculateFlatVertices(origVertices, indices)
+    {
+        var vertices = [];
+        for(var i = 0; i < indices.length; i+=3)
+        {
+            var ia = indices[i] * 3;
+            var ib = indices[i + 1] * 3;
+            var ic = indices[i + 2] * 3;
+            var pa = [origVertices[ia], origVertices[ia + 1], origVertices[ia + 2]];
+            var pb = [origVertices[ib], origVertices[ib + 1], origVertices[ib + 2]];
+            var pc = [origVertices[ic], origVertices[ic + 1], origVertices[ic + 2]];
+            vertices.push(pa[0]);
+            vertices.push(pa[1]);
+            vertices.push(pa[2]);
+            vertices.push(pb[0]);
+            vertices.push(pb[1]);
+            vertices.push(pb[2]);
+            vertices.push(pc[0]);
+            vertices.push(pc[1]);
+            vertices.push(pc[2]);
+        }
+        return vertices;
+    }
+
+    //to calculate central texcoord
+    function calculateCentralTextureCoord(origTextures, indices)
+    {
+        var texcoord = [];
+        for(var i = 0; i < indices.length; i+=3)
+        {
+            var ia = indices[i] * 3;
+            var ib = indices[i + 1] * 3;
+            var ic = indices[i + 2] * 3;
+            var pa = [origTextures[ia], origTextures[ia + 1]];
+            var pb = [origTextures[ib], origTextures[ib + 1]];
+            var pc = [origTextures[ic], origTextures[ic + 1]];
+            var ratio = 1 / 3;
+            var pos = [(pa[0] + pb[0] + pc[0]) * ratio, (pa[1] + pb[1] + pc[1]) * ratio];
+            texcoord.push(pos[0]);
+            texcoord.push(pos[1]);
+            texcoord.push(pos[0]);
+            texcoord.push(pos[1]);
+            texcoord.push(pos[0]);
+            texcoord.push(pos[1]);
+        }
+        return texcoord;
+    }
+
+
+    function modelName(vertices, normals, colors){
+        this.vertices = vertices;
+        this.normals = normals;
+        this.colors = colors;
+    }
+
+
+    function loadModel(modelName) {
+        var request = new XMLHttpRequest();
+        request.open("GET", modelName);
+        request.onreadystatechange = function () {
+            if (request.readyState == 4) {
+                handleLoadedTeapot(JSON.parse(request.responseText));
+            }
+        }
+        request.send();
+    }
+
+
+    var teapotAngle = 180;
+    var shadingType = 3;
+    var textureType = 0;
+    var shear = 0;
+
+    function drawScene() {
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+        if (teapotVertexPositionBuffer == null || teapotVertexNormalBuffer == null || teapotVertexTextureCoordBuffer == null || teapotVertexIndexBuffer == null) {
+            return;
+        }
+
+        shadingType = document.getElementById("ShadingType0").value;
+
+        gl.uniform1i(shaderProgram.vsShadingType, shadingType);
+        gl.uniform1i(shaderProgram.fsShadingType, shadingType);
+
+        gl.uniform3f(shaderProgram.sunLightPos, 1000.0, 1000.0, 1000.0);
+        gl.uniform3f(shaderProgram.sunLightAmb, 0.2, 0.2, 0.2);
+        gl.uniform3f(shaderProgram.sunLightDif, 1.0, 1.0, 1.0);
+        gl.uniform3f(shaderProgram.sunLightSpe, 1.0, 1.0, 1.0);
+
+        var shininess = 32.0;
+        shininess = parseFloat(document.getElementById("shininess").value);
+        shininess < 1 ? 1 : shininess;
+        gl.uniform1f(shaderProgram.materialShininess, shininess);
+        
+        mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, pMatrix);
+
+        mat4.identity(mvMatrix);
+
+        mat4.translate(mvMatrix, [0, 0, -40]);
+
+        mat4.rotate(mvMatrix, degToRad(teapotAngle), [0, 1, 0]);
+
+        mat4.identity(shearMatrix);
+        shearMatrix[1] = (shearMatrix[1] + 0.7) % 1;
+        mat4.multiply(mvMatrix, shearMatrix);
+
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, galvanizedTexture);
+        
+        gl.uniform1i(shaderProgram.samplerUniform, 0);
+        gl.uniform1i(shaderProgram.fsamplerUniform, 0);
+
+        if(shadingType == 0)
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexCentralTextureCoordBuffer);
+            gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, teapotVertexCentralTextureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexCentralPositionBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexCentralPositionAttribute, teapotVertexCentralPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexFlatNormalBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, teapotVertexFlatNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexFlatPositionBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, teapotVertexFlatPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            //draw arrays
+            setMatrixUniforms();
+            gl.drawArrays(gl.TRIANGLES, 0, teapotVertexFlatPositionBuffer.numItems);
+        }
+        else
+        {
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexTextureCoordBuffer);
+            gl.vertexAttribPointer(shaderProgram.textureCoordAttribute, teapotVertexTextureCoordBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexPositionBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, teapotVertexPositionBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, teapotVertexNormalBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, teapotVertexNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            //draw elements
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, teapotVertexIndexBuffer);
+            setMatrixUniforms();
+            gl.drawElements(gl.TRIANGLES, teapotVertexIndexBuffer.numItems, gl.UNSIGNED_SHORT, 0);
+        }
+    }
+
+
+    var lastTime = 0;
+    function animate() {
+        var timeNow = new Date().getTime();
+        if (lastTime != 0) {
+            var elapsed = timeNow - lastTime;
+            teapotAngle += 0.03 * elapsed;
+        }
+        lastTime = timeNow;
+    }
+
+
+    function tick() {
+        requestAnimFrame(tick);
+        drawScene();
+        animate();
+    }
+
+
+    function webGLStart() {
+        var canvas = document.getElementById("ICG-canvas");
+        initGL(canvas);
+        initShaders();
+        initTextures();
+        loadModel(document.getElementById("Model1").value);
+
+        gl.clearColor(0.0, 0.2, 0.2, 1.0);
+        gl.enable(gl.DEPTH_TEST);
+
+        tick();
+    }
+
+</script>
+
+</head>
+
+
+<body onload="webGLStart();">
+  
+    <canvas id="ICG-canvas" style="border: none;" width="800" height="600"></canvas>
+
+    <table style="border: 0; padding: 10px;">
+    <tr>
+        <td>
+            <select id="Model0">
+                <option selected value="Teapot.json">Cube</option>
+                <option value="Teapot.json">Teapot</option>
+                <option value="Teapot.json">Pikachu</option>
+            </select>
+        </td>
+        <td>
+            <select id="Model1">
+                <option selected value="Teapot.json">Cube</option>
+                <option value="Teapot.json">Teapot</option>
+                <option value="Teapot.json">Pikachu</option>
+            </select>
+        </td>
+        <td>
+            <select id="Model2">
+                <option selected value="Teapot.json">Cube</option>
+                <option value="Teapot.json">Teapot</option>
+                <option value="Teapot.json">Pikachu</option>
+            </select>
+        </td>
+    </tr>
+    <tr>
+        <td>
+            <select id="Texture0">
+            <option value=0>Points</option>
+            <option value=1>Lines</option>
+            <option value=2>Line_loop</option>
+            <option selected value=4>Triangles</option>
+            <option value=6>Triangle_fan</option>
+            </select>
+        </td>
+        <td>
+            <select id="Texture1">
+            <option value=0>Points</option>
+            <option value=1>Lines</option>
+            <option value=2>Line_loop</option>
+            <option selected value=4>Triangles</option>
+            <option value=6>Triangle_fan</option>
+            </select>
+        </td>
+        <td>
+            <select id="Texture2">
+            <option value=0>Points</option>
+            <option value=1>Lines</option>
+            <option value=2>Line_loop</option>
+            <option selected value=4>Triangles</option>
+            <option value=6>Triangle_fan</option>
+            </select>
+        </td>
+    </tr>
+    <tr>
+        <td>
+            <select id="ShadingType0">
+            <option selected value=0>Flat Shading</option>
+            <option value=1>Gouraud Shading</option>
+            <option value=2>Phong Shading</option>
+            <option value=3>Cartoon Shading</option>
+            </select>
+        </td>
+        <td>
+            <select id="ShadingType1">
+            <option selected value=0>Flat Shading</option>
+            <option value=1>Gouraud Shading</option>
+            <option value=2>Phong Shading</option>
+            <option value=3>Cartoon Shading</option>
+            </select>
+        </td>
+        <td>
+            <select id="ShadingType2">
+            <option selected value=0>Flat Shading</option>
+            <option value=1>Gouraud Shading</option>
+            <option value=2>Phong Shading</option>
+            <option value=3>Cartoon Shading</option>
+            </select>
+        </td>
+    </tr>
+    </table>
+    <b>Shininess:</b>
+    <input type="text" id="shininess" value="32.0">
+    <br/>
+
+</body>
+
+</html>
